@@ -11,6 +11,9 @@ class GatewayServer(private val port: Int = 8080) {
     private val startTime = Instant.now()
     private var server: HttpServer? = null
 
+    val actualPort: Int
+        get() = server?.address?.port ?: port
+
     fun start() {
         val httpServer = HttpServer.create(InetSocketAddress(port), 0)
         httpServer.executor = Executors.newVirtualThreadPerTaskExecutor()
