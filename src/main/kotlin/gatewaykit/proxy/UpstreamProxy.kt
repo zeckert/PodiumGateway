@@ -73,9 +73,39 @@ class UpstreamProxy(
             }
         }
 
+        val request = requestBuilder.build()
+        val retryConfig = ctx.route.upstream.retry
+        val maxAttempts = (retryConfig?.attempts ?: 1).coerceAtLeast(1)
+        val retryableStatuses = retryConfig?.on?.toSet() ?: emptySet()
+        val baseDelayMillis = retryConfig?.let { parseDuration(it.initialDelay).toMillis() } ?: 0L
+
+        var lastResponse: GatewayResponse? = null
+        for (attempt in 1..maxAttempts) {
+            val response = executeSingleAttempt(request)
+            lastResponse = response
+
+            val shouldRetry = attempt < maxAttempts && response.status in retryableStatuses
+            if (!shouldRetry) {
+                return response
+            }
+
+            if (baseDelayMillis > 0) {
+                val delayMillis = if (retryConfig?.backoff.equals("exponential", ignoreCase = true)) {
+                    baseDelayMillis * (1L shl (attempt - 1))
+                } else {
+                    baseDelayMillis
+                }
+                Thread.sleep(delayMillis)
+            }
+        }
+
+        return lastResponse ?: GatewayResponse.json(502, """{"error":"bad_gateway"}""")
+    }
+
+    private fun executeSingleAttempt(request: HttpRequest): GatewayResponse {
         return try {
             val upstreamResponse = httpClient.send(
-                requestBuilder.build(),
+                request,
                 HttpResponse.BodyHandlers.ofByteArray()
             )
 

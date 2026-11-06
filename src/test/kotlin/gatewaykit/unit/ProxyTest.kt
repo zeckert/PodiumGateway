@@ -32,6 +32,13 @@ class ProxyTest {
             if (path == "/slow") {
                 Thread.sleep(400)
             }
+            if (path == "/api/users/missing") {
+                val notFoundBody = """{"error":"user_not_found"}""".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(404, notFoundBody.size.toLong())
+                exchange.responseBody.use { it.write(notFoundBody) }
+                return@createContext
+            }
             val body = """{"received_path":"$path","method":"${exchange.requestMethod}"}""".toByteArray()
             exchange.responseHeaders.add("Content-Type", "application/json")
             exchange.sendResponseHeaders(200, body.size.toLong())
@@ -142,5 +149,19 @@ class ProxyTest {
         val response = client.send(request, HttpResponse.BodyHandlers.ofString())
 
         assertEquals(502, response.statusCode())
+    }
+
+    @Test
+    fun `passes through 404 response returned by upstream service`() {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("http://localhost:${server.actualPort}/api/users/missing"))
+            .GET()
+            .build()
+
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+
+        assertEquals(404, response.statusCode())
+        val json: Map<String, Any> = mapper.readValue(response.body())
+        assertEquals("user_not_found", json["error"])
     }
 }
