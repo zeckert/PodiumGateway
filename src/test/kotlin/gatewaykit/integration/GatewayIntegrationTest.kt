@@ -2,14 +2,13 @@ package gatewaykit.integration
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.sun.net.httpserver.HttpServer
 import gatewaykit.GatewayServer
 import gatewaykit.config.ConfigLoader
+import gatewaykit.mock.MockUpstreamCluster
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.io.File
-import java.net.InetSocketAddress
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -17,44 +16,14 @@ import java.net.http.HttpResponse
 import kotlin.test.assertEquals
 
 class GatewayIntegrationTest {
-    private val upstreamServers = mutableListOf<HttpServer>()
+    private val upstreamCluster = MockUpstreamCluster()
     private lateinit var gateway: GatewayServer
     private val client = HttpClient.newHttpClient()
     private val mapper = jacksonObjectMapper()
 
     @BeforeEach
     fun setUp() {
-        // Start mock upstream servers matching the ports in gateway.yaml (3001..3006)
-        val portsToService = mapOf(
-            3001 to "users-service",
-            3002 to "orders-service",
-            3003 to "products-service-1",
-            3004 to "products-service-2",
-            3005 to "legacy-service",
-            3006 to "internal-service"
-        )
-
-        portsToService.forEach { (port, serviceName) ->
-            val server = HttpServer.create(InetSocketAddress(port), 0)
-            server.createContext("/") { exchange ->
-                val requestBody = exchange.requestBody.use { it.readAllBytes().toString(Charsets.UTF_8) }
-                val responseJson = """
-                    {
-                      "service": "$serviceName",
-                      "method": "${exchange.requestMethod}",
-                      "path": "${exchange.requestURI.path}",
-                      "received_body": ${if (requestBody.isNotBlank()) requestBody else "null"}
-                    }
-                """.trimIndent().toByteArray()
-                exchange.responseHeaders.add("Content-Type", "application/json")
-                exchange.responseHeaders.add("Server", "MockUpstream/1.0")
-                exchange.responseHeaders.add("X-Powered-By", "Kotlin")
-                exchange.sendResponseHeaders(200, responseJson.size.toLong())
-                exchange.responseBody.use { it.write(responseJson) }
-            }
-            server.start()
-            upstreamServers.add(server)
-        }
+        upstreamCluster.startAll()
 
         // Load the actual gateway.yaml from the repo root (using port 0 so test doesn't clash if 8080 is in use)
         val loadedConfig = ConfigLoader.load(File("gateway.yaml"))
@@ -68,8 +37,7 @@ class GatewayIntegrationTest {
     @AfterEach
     fun tearDown() {
         gateway.stop()
-        upstreamServers.forEach { it.stop(0) }
-        upstreamServers.clear()
+        upstreamCluster.stopAll()
     }
 
     @Test
@@ -108,5 +76,65 @@ class GatewayIntegrationTest {
             HttpResponse.BodyHandlers.ofString()
         )
         assertEquals(405, disallowedRes.statusCode())
+
+        // 4. Upstream 404 on matched route (/api/users/missing -> 404 from users-service)
+        val upstream404Res = client.send(
+            HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:${gateway.actualPort}/api/users/missing"))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString()
+        )
+        assertEquals(404, upstream404Res.statusCode())
+        val upstream404Body: Map<String, Any?> = mapper.readValue(upstream404Res.body())
+        assertEquals("users-service", upstream404Body["service"])
+        assertEquals("not_found_in_upstream", upstream404Body["error"])
+    }
+
+    @Test
+    fun `api_key auth on internal route rejects missing or invalid key and allows valid key`() {
+        val internalUrl = URI.create("http://localhost:${gateway.actualPort}/api/internal/metrics")
+
+        // Missing header -> 401
+        val missingKeyRes = client.send(
+            HttpRequest.newBuilder().uri(internalUrl).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        )
+        assertEquals(401, missingKeyRes.statusCode())
+
+        // Wrong key -> 401
+        val wrongKeyRes = client.send(
+            HttpRequest.newBuilder()
+                .uri(internalUrl)
+                .header("X-API-Key", "wrong_key")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString()
+        )
+        assertEquals(401, wrongKeyRes.statusCode())
+
+        // Valid key from gateway.yaml -> 200 OK
+        val validKeyRes = client.send(
+            HttpRequest.newBuilder()
+                .uri(internalUrl)
+                .header("X-API-Key", "sk_live_abc123")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString()
+        )
+        assertEquals(200, validKeyRes.statusCode())
+    }
+
+    @Test
+    fun `orders route retries on 503 and succeeds on third attempt`() {
+        val ordersFlakyUrl = URI.create("http://localhost:${gateway.actualPort}/api/orders/flaky")
+
+        val response = client.send(
+            HttpRequest.newBuilder().uri(ordersFlakyUrl).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        )
+
+        assertEquals(200, response.statusCode())
+        assertEquals(3, upstreamCluster.flakyRequestCounter.get())
     }
 }
