@@ -1,7 +1,8 @@
-package gatewaykit
+package gatewaykit.unit
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import gatewaykit.GatewayServer
 import gatewaykit.config.ConfigLoader
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach

@@ -1,8 +1,9 @@
-package gatewaykit
+package gatewaykit.unit
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.sun.net.httpserver.HttpServer
+import gatewaykit.GatewayServer
 import gatewaykit.config.model.GatewayConfigFile
 import gatewaykit.config.model.GlobalGatewayConfig
 import gatewaykit.config.model.RouteConfig

@@ -1,4 +1,4 @@
-package gatewaykit
+package gatewaykit.unit
 
 import gatewaykit.config.model.RouteConfig
 import gatewaykit.config.model.UpstreamConfig
