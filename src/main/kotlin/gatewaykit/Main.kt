@@ -7,6 +7,7 @@ import gatewaykit.config.model.GatewayConfigFile
 import gatewaykit.config.model. GlobalGatewayConfig
 import gatewaykit.config.model.RouteConfig
 import gatewaykit.config.parseDuration
+import gatewaykit.middleware.ApiKeyAuthMiddleware
 import gatewaykit.pipeline.GatewayResponse
 import gatewaykit.pipeline.Middleware
 import gatewaykit.pipeline.Pipeline
@@ -55,7 +56,7 @@ class GatewayServer(
 
     private fun buildPipeline(route: RouteConfig): Pipeline {
         val middlewares = mutableListOf<Middleware>()
-        // Middlewares (Auth, RateLimit, CircuitBreaker, Transform) will plug in here
+        route.auth?.let { middlewares.add(ApiKeyAuthMiddleware(it)) }
         return Pipeline(middlewares) { ctx ->
             upstreamProxy.forward(ctx)
         }
