@@ -208,6 +208,10 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 #   * For example: A user cannot expect ${Hostname} to be expanded, as it is an environment variable and will be
 #     treated as '${Hostname}' itself on the command line.
 
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    set -- --project-cache-dir "$HOME/.gradle-cache" "$@"
+fi
+
 set -- \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
